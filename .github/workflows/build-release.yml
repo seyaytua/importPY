@@ -1,4 +1,3 @@
-cat > .github/workflows/build-release.yml << 'EOF'
 name: Build and Release
 
 on:
@@ -21,7 +20,7 @@ jobs:
           - os: ubuntu-latest
             name: Linux
             ext: ''
-      fail-fast: false  # 1つが失敗しても他を続行
+      fail-fast: false
             
     runs-on: ${{ matrix.os }}
     
@@ -41,12 +40,11 @@ jobs:
     - name: List Python files
       run: |
         echo "Python files in directory:"
-        ls *.py || dir *.py
+        ls *.py 2>/dev/null || dir *.py 2>nul || echo "No Python files found"
         
     - name: Build executable
       shell: bash
       run: |
-        # 最初のPythonファイルを見つける
         for file in *.py; do
           if [ -f "$file" ]; then
             echo "Building with $file"
@@ -79,6 +77,3 @@ jobs:
           PDFGenerator-*/*
         draft: false
         prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-EOF
