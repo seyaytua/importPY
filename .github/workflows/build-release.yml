@@ -1,3 +1,4 @@
+cat > .github/workflows/build-release.yml << 'EOF'
 name: Build and Release
 
 on:
@@ -20,6 +21,7 @@ jobs:
           - os: ubuntu-latest
             name: Linux
             ext: ''
+      fail-fast: false  # 1つが失敗しても他を続行
             
     runs-on: ${{ matrix.os }}
     
@@ -36,9 +38,22 @@ jobs:
         python -m pip install --upgrade pip
         pip install pyinstaller pandas reportlab
         
-    - name: Build executable
+    - name: List Python files
       run: |
-        pyinstaller --onefile --windowed --name PDFGenerator *.py
+        echo "Python files in directory:"
+        ls *.py || dir *.py
+        
+    - name: Build executable
+      shell: bash
+      run: |
+        # 最初のPythonファイルを見つける
+        for file in *.py; do
+          if [ -f "$file" ]; then
+            echo "Building with $file"
+            pyinstaller --onefile --windowed --name PDFGenerator "$file"
+            break
+          fi
+        done
         
     - name: Upload artifact
       uses: actions/upload-artifact@v4
@@ -66,3 +81,4 @@ jobs:
         prerelease: false
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+EOF
