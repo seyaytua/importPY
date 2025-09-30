@@ -6,6 +6,9 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write  # リリース作成に必要な権限を追加
+
 jobs:
   build:
     strategy:
@@ -84,6 +87,8 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write  # リリース作成権限
     
     steps:
     - uses: actions/checkout@v4
@@ -98,3 +103,4 @@ jobs:
           PDFGenerator-*/*
         draft: false
         prerelease: false
+        generate_release_notes: true
