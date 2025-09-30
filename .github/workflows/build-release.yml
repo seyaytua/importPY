@@ -37,13 +37,21 @@ jobs:
         python -m pip install --upgrade pip
         pip install pyinstaller pandas reportlab
         
-    - name: List Python files
+    - name: List Python files (Unix)
+      if: runner.os != 'Windows'
       run: |
         echo "Python files in directory:"
-        ls *.py 2>/dev/null || dir *.py 2>nul || echo "No Python files found"
+        ls *.py 2>/dev/null || echo "No Python files found"
         
-    - name: Build executable
-      shell: bash
+    - name: List Python files (Windows)
+      if: runner.os == 'Windows'
+      shell: cmd
+      run: |
+        echo Python files in directory:
+        dir *.py 2>NUL || echo No Python files found
+        
+    - name: Build executable (Unix)
+      if: runner.os != 'Windows'
       run: |
         for file in *.py; do
           if [ -f "$file" ]; then
@@ -52,6 +60,19 @@ jobs:
             break
           fi
         done
+        
+    - name: Build executable (Windows)
+      if: runner.os == 'Windows'
+      shell: powershell
+      run: |
+        $pyfile = Get-ChildItem -Filter *.py | Select-Object -First 1
+        if ($pyfile) {
+          Write-Host "Building with $($pyfile.Name)"
+          pyinstaller --onefile --windowed --name PDFGenerator $pyfile.Name
+        } else {
+          Write-Host "No Python files found"
+          exit 1
+        }
         
     - name: Upload artifact
       uses: actions/upload-artifact@v4
