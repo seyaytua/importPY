@@ -203,14 +203,14 @@ def create_pdf_from_csv():
         fontName='Helvetica'
     )
     
-    # 情報値用スタイル
+    # 情報値用スタイル（日本語対応）
     info_value_style = ParagraphStyle(
         name='InfoValue',
         parent=styles['Normal'],
         fontSize=11,
         leading=16,
         textColor=colors.black,
-        fontName='Courier'
+        fontName=jp_font  # Courierから日本語フォントに変更
     )
 
     total_files = 0
