@@ -11,6 +11,7 @@ from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+from datetime import datetime
 import sys
 
 def register_japanese_font():
@@ -89,6 +90,33 @@ def sanitize_filename(filename):
     """ファイル名として使用できない文字をアンダースコアに置換する"""
     return re.sub(r'[\\/*?:"<>|]', '_', filename)
 
+def add_header(canvas, doc, timestamp_str):
+    """PDFの各ページにヘッダーを追加する"""
+    canvas.saveState()
+    
+    # 背景ボックスの設定
+    box_width = 35*mm
+    box_height = 6*mm
+    x_position = A4[0] - 20*mm - box_width
+    y_position = A4[1] - 12*mm - box_height/2
+    
+    # 薄いグレーの背景ボックスを描画
+    canvas.setFillColor(colors.HexColor('#f8f9fa'))
+    canvas.setStrokeColor(colors.HexColor('#dee2e6'))
+    canvas.setLineWidth(0.5)
+    canvas.roundRect(x_position, y_position, box_width, box_height, 2, fill=1, stroke=1)
+    
+    # テキストを描画
+    canvas.setFillColor(colors.HexColor('#6c757d'))
+    canvas.setFont('Helvetica', 8)
+    canvas.drawString(
+        x_position + 2*mm,
+        y_position + 2*mm,
+        f"Issue Date: {timestamp_str}"
+    )
+    
+    canvas.restoreState()
+
 def create_pdf_from_csv():
     """メインの処理"""
     jp_font = register_japanese_font()
@@ -106,6 +134,9 @@ def create_pdf_from_csv():
     print(f"\nCSVファイル: {csv_path}")
     print(f"出力先フォルダ: {output_folder}\n")
 
+    # タイムスタンプを生成（日付のみ、ドット区切り）
+    timestamp_str = datetime.now().strftime("%Y.%m.%d")
+
     try:
         # エンコーディングを指定して読み込み
         df = pd.read_csv(csv_path, header=None, dtype=str, encoding='utf-8').fillna('')
@@ -120,6 +151,11 @@ def create_pdf_from_csv():
         print(f"エラー: CSVファイルの読み込みに失敗しました: {e}")
         return
 
+    # 最低2行必要（1行目=タイトル、2行目以降=データ）
+    if len(df) < 2:
+        print("エラー: CSVファイルに十分なデータがありません。")
+        return
+    
     # --- スタイルの定義 ---
     styles = getSampleStyleSheet()
     
@@ -146,40 +182,49 @@ def create_pdf_from_csv():
         textColor=colors.HexColor('#d9534f')
     )
     
-    # カードヘッダー用スタイル（教科書名）
-    card_header_style = ParagraphStyle(
-        name='CardHeader',
+    # 教科書名用スタイル
+    textbook_title_style = ParagraphStyle(
+        name='TextbookTitle',
         parent=styles['Heading2'],
         fontName=jp_font,
         fontSize=14,
         leading=18,
+        spaceAfter=8,
         textColor=colors.HexColor('#343a40')
     )
     
-    # ラベル用スタイル（ID, PASSWORD）
-    label_style = ParagraphStyle(
+    # 情報ラベル用スタイル（ID:, PASSWORD:など）
+    info_label_style = ParagraphStyle(
         name='InfoLabel',
         parent=styles['Normal'],
-        fontSize=8,
-        leading=10,
-        textColor=colors.HexColor('#6c757d'),
-        fontName='Helvetica'  # 英語ラベルなのでHelveticaのまま
+        fontSize=10,
+        leading=16,
+        textColor=colors.black,
+        fontName='Helvetica'
     )
     
-    # 値用スタイル（実際のIDとパスワード）
-    value_style = ParagraphStyle(
+    # 情報値用スタイル
+    info_value_style = ParagraphStyle(
         name='InfoValue',
         parent=styles['Normal'],
-        fontSize=12,
-        leading=14,
-        textColor=colors.HexColor('#212529'),
-        fontName='Courier'  # ID/パスワードは等幅フォントの方が見やすい
+        fontSize=11,
+        leading=16,
+        textColor=colors.black,
+        fontName='Courier'
     )
 
     total_files = 0
-    for index, row in df.iterrows():
+    skipped_rows = 0
+    
+    # 2行目以降を処理（各ユーザーのデータ）
+    # 1行目はタイトル行なのでスキップ
+    for index in range(1, len(df)):
+        row = df.iloc[index]
         email = row.iloc[0]
-        if not email:
+        
+        if not email or not email.strip():
+            skipped_rows += 1
+            print(f"スキップ: {index+1}行目 - メールアドレスが空です。")
             continue
         
         account_name = email.split('@')[0]
@@ -187,24 +232,48 @@ def create_pdf_from_csv():
         pdf_path = os.path.join(output_folder, pdf_filename)
 
         textbook_data = []
-        for i in range(1, len(row), 3):
-            if i + 2 < len(row):
-                textbook, user_id, password = row.iloc[i], row.iloc[i+1], row.iloc[i+2]
-                if pd.notna(user_id) and user_id.strip() and pd.notna(textbook) and textbook.strip():
-                    textbook_data.append({"name": textbook, "id": user_id, "pass": password})
+        
+        # B列から最後まで4列ずつ処理（教科書名, ID, Password, シリアルコード）
+        col_index = 1  # B列から開始（0がA列なので1がB列）
+        
+        # 行の最後まで処理
+        while col_index + 3 < len(row):  # 4列セットが取れる限り続ける
+            # 教科書名を取得
+            textbook_name = row.iloc[col_index].strip() if row.iloc[col_index] else ""
+            
+            # ID, Password, シリアルコードを取得
+            user_id = row.iloc[col_index + 1].strip() if row.iloc[col_index + 1] else ""
+            password = row.iloc[col_index + 2].strip() if row.iloc[col_index + 2] else ""
+            serial_code = row.iloc[col_index + 3].strip() if row.iloc[col_index + 3] else ""
+            
+            # 教科書名とIDの両方がある場合のみ追加
+            if textbook_name and user_id:
+                textbook_data.append({
+                    "name": textbook_name,
+                    "id": user_id,
+                    "pass": password,
+                    "serial": serial_code
+                })
+            
+            col_index += 4  # 次のセットへ（4列進む）
 
+        # 有効なデータがない場合はスキップ
         if not textbook_data:
+            skipped_rows += 1
             print(f"スキップ: {email} には有効なデータがありません。")
             continue
 
-        print(f"作成中: {pdf_filename}")
+        print(f"作成中 ({index}/{len(df)-1}): {pdf_filename} ({len(textbook_data)}件の教科書)")
+        
+        def add_header_with_timestamp(canvas, doc):
+            add_header(canvas, doc, timestamp_str)
         
         doc = SimpleDocTemplate(
             pdf_path,
             pagesize=A4,
             leftMargin=20*mm,
             rightMargin=20*mm,
-            topMargin=20*mm,
+            topMargin=25*mm,  # ヘッダー分のスペースを確保
             bottomMargin=20*mm
         )
         story = []
@@ -215,57 +284,62 @@ def create_pdf_from_csv():
         
         # 各教科書の情報
         for data in textbook_data:
-            # ID/パスワードのコンテンツ
-            id_content = [
-                Paragraph("ID", label_style),
-                Spacer(1, 2*mm),
-                Paragraph(data['id'], value_style)
-            ]
-            pass_content = [
-                Paragraph("PASSWORD", label_style),
-                Spacer(1, 2*mm),
-                Paragraph(data['pass'], value_style)
-            ]
+            # 教科書名
+            story.append(Paragraph(f"教科書：{data['name']}", textbook_title_style))
             
-            # ID/パスワードのテーブル
-            body_table = Table(
-                [[id_content, pass_content]],
-                colWidths=[65*mm, 65*mm]
+            # 情報テーブルのデータを作成
+            info_rows = []
+            
+            # IDは必須（ここまで来ている時点で必ず存在）
+            info_rows.append([
+                Paragraph("ID:", info_label_style),
+                Paragraph(data['id'], info_value_style)
+            ])
+            
+            # パスワードがある場合
+            if data['pass']:
+                info_rows.append([
+                    Paragraph("PASSWORD:", info_label_style),
+                    Paragraph(data['pass'], info_value_style)
+                ])
+            
+            # シリアルコードがある場合
+            if data['serial']:
+                info_rows.append([
+                    Paragraph("SERIAL CODE:", info_label_style),
+                    Paragraph(data['serial'], info_value_style)
+                ])
+            
+            # 情報のテーブル
+            info_table = Table(
+                info_rows,
+                colWidths=[35*mm, 115*mm]
             )
-            body_table.setStyle(TableStyle([
-                ('VALIGN', (0,0), (-1,-1), 'TOP'),
+            info_table.setStyle(TableStyle([
+                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
                 ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#f8f9fa')),
                 ('PADDING', (0,0), (-1,-1), 8),
-                ('LEFTPADDING', (0,0), (-1,-1), 10),
-                ('RIGHTPADDING', (0,0), (-1,-1), 10),
-                ('ROUNDEDCORNERS', (0,0), (-1,-1), 4),
-            ]))
-
-            # カード全体のテーブル
-            card_table = Table(
-                [[Paragraph(data['name'], card_header_style)], [body_table]],
-                colWidths=[140*mm]
-            )
-            card_table.setStyle(TableStyle([
-                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-                ('BOTTOMPADDING', (0,0), (0,0), 10),
-                ('TOPPADDING', (0,1), (0,1), 5),
-                ('LINEBEFORE', (0,0), (-1,-1), 3, colors.HexColor('#17a2b8')),
-                ('LEFTPADDING', (0,0), (-1,-1), 15),
+                ('LEFTPADDING', (0,0), (0,-1), 10),
+                ('ALIGN', (0,0), (0,-1), 'LEFT'),
+                ('ALIGN', (1,0), (1,-1), 'LEFT'),
             ]))
             
-            story.append(card_table)
-            story.append(Spacer(1, 8*mm))
+            story.append(info_table)
+            story.append(Spacer(1, 10*mm))
 
-        # PDFを生成
+        # PDFを生成（ヘッダー付き）
         try:
-            doc.build(story)
+            doc.build(story, onFirstPage=add_header_with_timestamp, onLaterPages=add_header_with_timestamp)
             total_files += 1
         except Exception as e:
             print(f"エラー: {pdf_filename} の作成に失敗しました: {e}")
 
-    print(f"\n処理完了: {total_files}件のPDFファイルを作成しました。")
-    print(f"出力先: {output_folder}")
+    print(f"\n{'='*60}")
+    print(f"処理完了:")
+    print(f"  作成成功: {total_files}件のPDFファイル")
+    print(f"  スキップ: {skipped_rows}行")
+    print(f"  出力先: {output_folder}")
+    print(f"{'='*60}")
 
 
 if __name__ == '__main__':
